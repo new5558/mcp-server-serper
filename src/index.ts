@@ -5,7 +5,8 @@
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import express, { Request, Response } from "express";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -267,11 +268,36 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
 });
 
 /**
- * Start the server using stdio transport.
+ * Start the server using Streamable HTTP transport.
  */
 async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  const app = express();
+  app.use(express.json());
+
+  // Stateless endpoint – each request gets its own transport
+  app.all("/mcp", async (req: Request, res: Response) => {
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    // Log outgoing messages from server to client
+    transport.onmessage = (message) => {
+      console.log("[MCP → Client]", JSON.stringify(message));
+    };
+    transport.onerror = (error) => {
+      console.error("[MCP Error]", error);
+    };
+
+    // Log incoming request body (client → server)
+    if (req.method === "POST") {
+      console.log("[Client → MCP]", JSON.stringify(req.body));
+    }
+
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  });
+
+  const port = process.env.PORT ? Number(process.env.PORT) : 3000;
+  app.listen(port, () => {
+    console.log(`Serper MCP Server listening on port ${port}`);
+  });
 }
 
 main().catch((error) => {
